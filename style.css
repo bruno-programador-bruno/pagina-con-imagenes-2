@@ -1,0 +1,226 @@
+const container = document.getElementById('container');
+const clearButton = document.getElementById('clearButton');
+const pencilButton = document.getElementById('pencilButton');
+const canvas = document.getElementById('drawingCanvas');
+const ctx = canvas.getContext('2d');
+let isDrawing = false;
+let drawingEnabled = false;
+let isDragging = false;
+let isResizing = false;
+let dragImage = null;
+let offsetX, offsetY, startX, startY, startWidth, startHeight;
+
+// Historial de acciones para deshacer/rehacer
+let undoStack = [];
+let redoStack = [];
+
+// Configuración del canvas
+canvas.width = window.innerWidth;
+canvas.height = document.body.scrollHeight;
+ctx.strokeStyle = '#000000';
+ctx.lineWidth = 2;
+
+// Guardar estado en el historial
+function saveState() {
+    const images = [...document.querySelectorAll('img')].map(img => ({
+        src: img.src,
+        x: parseInt(img.style.left),
+        y: parseInt(img.style.top),
+        width: parseInt(img.style.width),
+        height: parseInt(img.style.height)
+    }));
+    const drawingData = canvas.toDataURL();
+    undoStack.push({ images, drawingData });
+    redoStack = []; // Limpiar el stack de rehacer después de una nueva acción
+}
+
+// Restaurar estado desde el historial
+function restoreState(state) {
+    // Restaurar imágenes
+    container.innerHTML = '';
+    state.images.forEach(imgData => {
+        createImage(imgData.src, imgData.x, imgData.y, imgData.width, imgData.height);
+    });
+
+    // Restaurar el dibujo
+    const img = new Image();
+    img.src = state.drawingData;
+    img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+    };
+}
+
+// Deshacer acción (Ctrl+Z)
+function undo() {
+    if (undoStack.length > 0) {
+        const currentState = undoStack.pop();
+        redoStack.push(currentState);
+        if (undoStack.length > 0) {
+            restoreState(undoStack[undoStack.length - 1]);
+        } else {
+            // Si no hay más estados en el stack de undo, limpiamos todo
+            container.innerHTML = '';
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+}
+
+// Rehacer acción (Ctrl+Y)
+function redo() {
+    if (redoStack.length > 0) {
+        const state = redoStack.pop();
+        undoStack.push(state);
+        restoreState(state);
+    }
+}
+
+// Eventos de teclado para Ctrl+Z y Ctrl+Y
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        undo();
+    } else if (e.ctrlKey && e.key === 'y') {
+        e.preventDefault();
+        redo();
+    }
+});
+
+// Alternar entre mover imágenes y dibujar
+pencilButton.addEventListener('click', () => {
+    drawingEnabled = !drawingEnabled;
+    canvas.style.pointerEvents = drawingEnabled ? 'auto' : 'none';
+    pencilButton.style.backgroundColor = drawingEnabled ? '#ffcc00' : '#4CAF50';
+});
+
+// Funcionalidad para dibujar en el canvas
+canvas.addEventListener('mousedown', (e) => {
+    if (drawingEnabled) {
+        isDrawing = true;
+        ctx.beginPath();
+        ctx.moveTo(e.clientX, e.clientY + window.scrollY);
+        saveState(); // Guardar el estado antes de empezar a dibujar
+    }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (isDrawing && drawingEnabled) {
+        ctx.lineTo(e.clientX, e.clientY + window.scrollY);
+        ctx.stroke();
+    }
+});
+
+canvas.addEventListener('mouseup', () => {
+    if (isDrawing && drawingEnabled) {
+        isDrawing = false;
+    }
+});
+
+// Cargar dibujos guardados
+document.addEventListener('DOMContentLoaded', () => {
+    const savedImages = JSON.parse(localStorage.getItem('images')) || [];
+    savedImages.forEach(imgData => {
+        createImage(imgData.src, imgData.x, imgData.y, imgData.width, imgData.height);
+    });
+
+    const savedDrawing = localStorage.getItem('drawing');
+    if (savedDrawing) {
+        const img = new Image();
+        img.src = savedDrawing;
+        img.onload = () => {
+            ctx.drawImage(img, 0, 0);
+        };
+    }
+});
+
+document.addEventListener('paste', function (e) {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+            const blob = items[i].getAsFile();
+            const reader = new FileReader();
+            reader.onload = function (event) {
+                createImage(event.target.result, 50, 50, 200, 200);
+                saveState(); // Guardar el estado después de pegar una imagen
+            };
+            reader.readAsDataURL(blob);
+        }
+    }
+});
+
+function createImage(src, x, y, width, height) {
+    const img = document.createElement('img');
+    img.src = src;
+    img.style.left = `${x}px`;
+    img.style.top = `${y}px`;
+    img.style.width = `${width}px`;
+    img.style.height = `${height}px`;
+
+    const resizeHandle = document.createElement('div');
+    resizeHandle.classList.add('resize-handle');
+    img.appendChild(resizeHandle);
+
+    container.appendChild(img);
+
+    img.addEventListener('mousedown', (e) => {
+        if (e.target === resizeHandle) {
+            isResizing = true;
+            dragImage = img;
+            startX = e.clientX;
+            startY = e.clientY;
+            startWidth = parseInt(document.defaultView.getComputedStyle(img).width, 10);
+            startHeight = parseInt(document.defaultView.getComputedStyle(img).height, 10);
+        } else {
+            isDragging = true;
+            dragImage = img;
+            offsetX = e.clientX - img.getBoundingClientRect().left;
+            offsetY = e.clientY - img.getBoundingClientRect().top;
+        }
+        saveState(); // Guardar el estado antes de empezar a mover o redimensionar
+    });
+
+    img.addEventListener('mouseup', () => {
+        isDragging = false;
+        isResizing = false;
+        dragImage = null;
+        saveState(); // Guardar el estado después de mover o redimensionar
+    });
+}
+
+document.addEventListener('mousemove', (e) => {
+    if (isDragging && dragImage) {
+        dragImage.style.left = `${e.clientX - offsetX}px`;
+        dragImage.style.top = `${e.clientY - offsetY}px`;
+    }
+
+    if (isResizing && dragImage) {
+        dragImage.style.width = `${startWidth + e.clientX - startX}px`;
+        dragImage.style.height = `${startHeight + e.clientY - startY}px`;
+    }
+});
+
+document.addEventListener('mouseup', () => {
+    isDragging = false;
+    isResizing = false;
+    dragImage = null;
+});
+
+// Borrar todas las imágenes y el dibujo
+clearButton.addEventListener('click', () => {
+    container.innerHTML = '';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    saveState(); // Guardar el estado después de borrar todo
+});
+
+// Guardar en localStorage antes de cerrar la página
+window.addEventListener('beforeunload', () => {
+    const images = [...document.querySelectorAll('img')].map(img => ({
+        src: img.src,
+        x: img.style.left,
+        y: img.style.top,
+        width: img.style.width,
+        height: img.style.height
+    }));
+    localStorage.setItem('images', JSON.stringify(images));
+    localStorage.setItem('drawing', canvas.toDataURL());
+});
